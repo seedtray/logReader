@@ -40,7 +40,7 @@ const pollInterval = 1 * time.Millisecond
 
 func (pw *PollingFileWatcher) watch(updates chan updateSignal) {
 	var lastSize int64 = 0
-	lastModTime := time.UnixMilli(0)
+	lastModTime := time.Unix(0, 0)
 	for {
 		if !pw.watching {
 			close(updates)
