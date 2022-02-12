@@ -40,9 +40,9 @@ func newFileForTest(t *testing.T) *FileForTest {
 	return &FileForTest{t, ro, rw}
 }
 
-// Ensures that a reader hits EOF when calling scan.
-// It also ensures that Scan() doesn't return any error.
-func (lr *LineReader) assertScanReachesEOF(t *testing.T) {
+// Ensures that a reader hits EOF when calling ReadLine.
+// It also ensures that ReadLine doesn't return any error.
+func (lr *LineReader) assertReadLineReachesEOF(t *testing.T) {
 	line, _, err := lr.ReadLine()
 	if err != io.EOF {
 		t.Error(err)
@@ -52,9 +52,9 @@ func (lr *LineReader) assertScanReachesEOF(t *testing.T) {
 	}
 }
 
-// Ensures that calling Scan() once will find the expected line
+// Ensures that calling ReadLine() once will find the expected line
 // Note that lines are typically []byte, but we're using strings here for convenience.
-func (lr *LineReader) assertScanFindsLine(t *testing.T, expected string) {
+func (lr *LineReader) assertReadLineFindsLine(t *testing.T, expected string) {
 	line, _, err := lr.ReadLine()
 	if err != nil {
 		t.Error(err)
@@ -64,24 +64,24 @@ func (lr *LineReader) assertScanFindsLine(t *testing.T, expected string) {
 	}
 }
 
-// Ensures that the reader would find the expected lines.
+// Ensures that LineReader would find the expected lines.
 // It doesn't continue scanning after the last matched line.
-func (lr *LineReader) assertScanFindsLines(t *testing.T, expected []string) {
+func (lr *LineReader) assertReadLineFindsLines(t *testing.T, expected []string) {
 	for _, line := range expected {
-		lr.assertScanFindsLine(t, line)
+		lr.assertReadLineFindsLine(t, line)
 	}
 }
 
-// Test that calling Scan() on an empty file will just hit EOF
+// Test that calling ReadLine() on an empty file will just hit EOF
 func TestEmptyFileReturnsEOF(t *testing.T) {
 	reader := NewLineReader(iotest.ErrReader(io.EOF))
-	reader.assertScanReachesEOF(t)
+	reader.assertReadLineReachesEOF(t)
 }
 
-// Test that calling Scan() on a file with a single and terminated line will find it.
+// Test that calling ReadLine() on a file with a single and terminated line will find it.
 func TestSingleLineIsFound(t *testing.T) {
 	reader := NewLineReader(strings.NewReader("Hello World\n"))
-	reader.assertScanFindsLine(t, "Hello World")
+	reader.assertReadLineFindsLine(t, "Hello World")
 }
 
 // Test that a file holding two terminated lines will be found by calling ReadLine() repeatedly.
@@ -89,7 +89,7 @@ func TestTwoLinesAreFound(t *testing.T) {
 	tf := newFileForTest(t)
 	reader := NewLineReader(tf.Reader)
 	tf.Append("Hello world\nAnother\n")
-	reader.assertScanFindsLines(t, []string{"Hello world", "Another"})
+	reader.assertReadLineFindsLines(t, []string{"Hello world", "Another"})
 }
 
 // Test that an unterminated line at the end of a file will not be returned by ReadLine,
@@ -98,7 +98,7 @@ func TestUnterminatedLineAtEOFNotReadImplicitly(t *testing.T) {
 	tf := newFileForTest(t)
 	reader := NewLineReader(tf.Reader)
 	tf.Append("Hello world\nUnterminated")
-	reader.assertScanFindsLines(t, []string{"Hello world"})
+	reader.assertReadLineFindsLines(t, []string{"Hello world"})
 	lastLine, err := reader.ReadLastLine()
 	if err != nil {
 		t.Error(err)
@@ -112,7 +112,7 @@ func TestUnterminatedLineAtEOFNotReadImplicitly(t *testing.T) {
 func TestCRNotRemovedFromUnterminatedLine(t *testing.T) {
 	tf := newFileForTest(t)
 	reader := NewLineReader(tf.Reader)
-	reader.assertScanFindsLines(t, nil)
+	reader.assertReadLineFindsLines(t, nil)
 	tf.Append("Unterminated\r")
 	lastLine, err := reader.ReadLastLine()
 	if err != nil {
@@ -124,19 +124,19 @@ func TestCRNotRemovedFromUnterminatedLine(t *testing.T) {
 }
 
 // A reader han hit eof, but if the file gets written by a third party, it will find those
-//appended contents on the next call to Scan()
+//appended contents on the next call to ReadLine()
 func TestCanReadAppendsAfterReachingEOF(t *testing.T) {
 	ft := newFileForTest(t)
 	reader := NewLineReader(ft.Reader)
 
 	ft.Append("Hello ")
-	reader.assertScanReachesEOF(t)
+	reader.assertReadLineReachesEOF(t)
 
 	ft.Append("World\n")
-	reader.assertScanFindsLine(t, "Hello World")
+	reader.assertReadLineFindsLine(t, "Hello World")
 }
 
-// A reader will not scan a lien unless it's finished by a newline, even at EOF.
+// A LineReader will not read a line unless it's finished by a newline, even at EOF.
 // This is relevant because a half written line at the end of the file is ambiguous:
 // It might be the last (but unterminated!) full line of a file, or it's a partially written line.
 // Typically, the reader would need more context in order to determine this.
@@ -147,10 +147,10 @@ func TestWaitsForNewlineAtEOF(t *testing.T) {
 	reader := NewLineReader(ft.Reader)
 
 	ft.Append("Hello World\nHey!")
-	reader.assertScanFindsLine(t, "Hello World")
-	reader.assertScanReachesEOF(t)
+	reader.assertReadLineFindsLine(t, "Hello World")
+	reader.assertReadLineReachesEOF(t)
 	ft.Append("\n")
-	reader.assertScanFindsLine(t, "Hey!")
+	reader.assertReadLineFindsLine(t, "Hey!")
 }
 
 // helper function to create a string full of zeroes.
@@ -158,7 +158,7 @@ func makeZeroesString(length uint) string {
 	return fmt.Sprintf("%*d", length, 0)
 }
 
-// Test that the if the underlying scanned file is served by a buffered reader,
+// Test that the if the underlying file is served by a buffered reader,
 // LineReader can find lines larger than the buffer size.
 func TestLineCanBeBiggerThanBufferSize(t *testing.T) {
 	contents := makeZeroesString(1000)
@@ -166,7 +166,7 @@ func TestLineCanBeBiggerThanBufferSize(t *testing.T) {
 	ft.Append(contents + "\n")
 	reader := NewLineReader(nil)
 	reader.reader = bufio.NewReaderSize(ft.Reader, 5)
-	reader.assertScanFindsLine(t, contents)
+	reader.assertReadLineFindsLine(t, contents)
 }
 
 func TestCanResumeAfterOneLineRead(t *testing.T) {
@@ -185,5 +185,5 @@ func TestCanResumeAfterOneLineRead(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	newReader.assertScanFindsLines(t, []string{"line2", "line3"})
+	newReader.assertReadLineFindsLines(t, []string{"line2", "line3"})
 }
