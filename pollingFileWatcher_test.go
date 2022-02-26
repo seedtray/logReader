@@ -12,11 +12,9 @@ func TestNotifiesOnAppend(t *testing.T) {
 	if err != nil {
 		t.Error(err)
 	}
-	watcher := PollingFileWatcher{t.Name(), TestFs, false}
-	updates, err := watcher.Start()
-	if err != nil {
-		t.Error(err)
-	}
+	watcher := PollingFileWatcher{filename: t.Name(), fs: TestFs}
+	updates, stop := watcher.Start()
+	defer stop()
 	select {
 	case <-updates:
 	case <-time.After(10 * pollInterval):
@@ -37,16 +35,14 @@ func TestNotifiesOnAppend(t *testing.T) {
 	}
 }
 
-func TestSendsErrorIfStatFails(t *testing.T) {
+func TestClosesAndStoresErrorIfStatFails(t *testing.T) {
 	_, err := TestFs.OpenFile(t.Name(), syscall.O_CREAT|syscall.O_APPEND|syscall.O_SYNC, 0600)
 	if err != nil {
 		t.Error(err)
 	}
-	watcher := PollingFileWatcher{t.Name(), TestFs, false}
-	updates, err := watcher.Start()
-	if err != nil {
-		t.Error(err)
-	}
+	watcher := PollingFileWatcher{filename: t.Name(), fs: TestFs}
+	updates, stop := watcher.Start()
+	defer stop()
 	select {
 	case <-updates:
 	case <-time.After(10 * pollInterval):
@@ -56,12 +52,14 @@ func TestSendsErrorIfStatFails(t *testing.T) {
 		t.Error(err)
 	}
 	select {
-	case err = <-updates:
-		if err == nil {
-			t.Errorf("didn't receive an expected error")
+	case _, ok := <-updates:
+		if ok {
+			t.Errorf("didn't close the channel on an error")
+		}
+		if watcher.Err() == nil {
+			t.Errorf("Error is nil after closing the channel.")
 		}
 	case <-time.After(10 * pollInterval):
 		t.Errorf("watcher didn't signal a file change.")
 	}
-
 }

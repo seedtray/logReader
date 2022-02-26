@@ -13,15 +13,17 @@ type LineReader struct {
 	reader       *bufio.Reader
 	nextPosition int64
 	buffer       []byte
+	finalized    bool
 }
 
 // NewLineReader makes a new LineReader from a Reader.
 func NewLineReader(reader io.Reader) *LineReader {
-	return &LineReader{bufio.NewReader(reader), 0, newBuffer()}
+	return &LineReader{bufio.NewReader(reader), 0, newBuffer(), false}
 }
 
 // NewLineReaderAtPosition makes a line scanner that will start scanning at a specific position within the given file.
-func NewLineReaderAtPosition(source io.ReadSeeker, position int64) (*LineReader, error) {
+// fileFinalized tells the file is not expected to be further appended to. See ReadLine
+func NewLineReaderAtPosition(source io.ReadSeeker, position int64, fileFinalized bool) (*LineReader, error) {
 	offset, err := source.Seek(position, io.SeekStart)
 	if err != nil {
 		return nil, err
@@ -29,22 +31,24 @@ func NewLineReaderAtPosition(source io.ReadSeeker, position int64) (*LineReader,
 	if offset != position {
 		return nil, errors.New("cant reposition within file")
 	}
-	ls := &LineReader{bufio.NewReader(source), position, newBuffer()}
-	return ls, nil
+	lineReader := &LineReader{reader: bufio.NewReader(source), nextPosition: position, buffer: newBuffer(), finalized: fileFinalized}
+	return lineReader, nil
 }
 
 // ReadLine reads the next line from the input.
 // Returns the scanned line, the position within the file where the next line will start and any occurring error.
-// Either a line is matched, in which case (line, position, nil) is returned, or an error is found and
-// (nil, 0, err) is returned.
+// Typically, either a line is matched, in which case (line, position, nil) is returned, or an error is found and
+// (nil, 0, err) is returned. The exception is around EOF, unterminated lines and finalized files:
 //
-// Unlike bufio.Scanner, it treats EOF differently. Here, EOF is expected to be transient since writers may be appending
-// content intermitently. When a partial line is read and EOF is reached before finding a newline, the line is not
-// returned, and io.EOF will. Subsequent calls to ReadLine() may finish scanning the line if a newline is ultimately
-// appended.
-// Newline is either '\n' or '\r\n'. Lines are returned without newline and they can be empty.
+// After a LineReader consider its source file finalized, it behaves like bufio.ScanLines. This means
+// that a possibly unterminated line at the end of the file will be considered complete, and returned (along with its
+// position). In that case the 3 values (line, position and error) will be non nil and meaningful.
 //
-// For force reading the partially unterminated line at the end of the file, call ReadLastLine()
+// On the contrary, when a LineReader considers its source file as not finalized, unterminated lines are not returned,
+// in the expectation that the file will be appended to externally and the line will be properly terminated.
+// In this case, ReadLine returns (nil, 0, io.EOF)
+//
+// Newline is either '\n' or '\r\n'. Lines are returned without newline, and they can be empty.
 //
 func (lr *LineReader) ReadLine() ([]byte, int64, error) {
 	for {
@@ -55,7 +59,7 @@ func (lr *LineReader) ReadLine() ([]byte, int64, error) {
 		}
 		if readError == nil {
 			if len(read) == 0 {
-				return nil, 0, errors.New("ReadSlice found newLine but returned empty")
+				panic("ReadSlice found newLine but returned empty")
 			}
 			line := dropCR(lr.buffer[:len(lr.buffer)-1])
 			lr.buffer = newBuffer()
@@ -66,30 +70,26 @@ func (lr *LineReader) ReadLine() ([]byte, int64, error) {
 			// we're good to carry on
 			continue
 		}
-		if readError == io.EOF {
-			return nil, 0, io.EOF
+		if lr.finalized && readError == io.EOF && len(lr.buffer) > 0 {
+			line := lr.buffer
+			lr.buffer = nil
+			return line, lr.nextPosition, readError
 		}
 		return nil, 0, readError
 	}
 }
 
-// ReadLastLine reads the next line, even if it's unterminated.
-// This has the same behavior ar bufio.Scanner.Scan() when configured with bufio.ScanLines
-func (lr *LineReader) ReadLastLine() ([]byte, error) {
-	line, _, err := lr.ReadLine()
-	if err == io.EOF {
-		line = lr.buffer // note that we don't dropCR from the buffer since we haven't found a newline.
-		lr.buffer = newBuffer()
-		return line, nil
-	}
-	return line, err
+// Finalize considers the underlying file being read by LineReader as finalized, meaning no further appends are
+// expected on it. This affects how EOF is treated by ReadLine.
+func (lr *LineReader) Finalize() {
+	lr.finalized = true
 }
 
-const DEFAULT_LINE_BUFFER_SIZE = 4096
+const DefaultLineBufferSize = 4096
 
 // newBuffer makes a new, empty buffer for the next line to be read
 func newBuffer() []byte {
-	return make([]byte, 0, DEFAULT_LINE_BUFFER_SIZE)
+	return make([]byte, 0, DefaultLineBufferSize)
 }
 
 // dropCR drops a terminal \r from a newline terminated line.

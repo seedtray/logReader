@@ -18,17 +18,15 @@ func main() {
 	filename := flag.Arg(0)
 
 	watcher := logReader.NewOsPollingFileWatcher(filename)
-	fileUpdates, err := watcher.Start()
-	if err != nil {
-		log.Fatalln(err)
-	}
+	fileUpdates, stop := watcher.Start()
+	defer stop()
 
 	fs := afero.NewOsFs()
 	file, err := fs.Open(filename)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	lineReader, err := logReader.NewLineReaderAtPosition(file, *position)
+	lineReader, err := logReader.NewLineReaderAtPosition(file, *position, false)
 	if err != nil {
 		log.Fatalln(err)
 	}
@@ -38,9 +36,9 @@ func main() {
 		if err == nil {
 			fmt.Printf("%10d: %s\n", position, string(line))
 		} else if err == io.EOF {
-			err = <-fileUpdates
-			if err != nil {
-				log.Fatalln(err)
+			_, ok := <-fileUpdates
+			if !ok {
+				log.Fatalln(watcher.Err())
 			}
 		} else {
 			log.Fatalln(err)
